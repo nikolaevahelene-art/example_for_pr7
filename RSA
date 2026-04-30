@@ -1,0 +1,229 @@
+import random
+from typing import Tuple, List
+
+
+def gcd(a: int, b: int) -> int:
+    """Старый добрый алгоритм Евклида для нахождения НОД."""
+    while b:
+        a, b = b, a % b
+    return a
+
+
+def extended_gcd(a: int, b: int) -> Tuple[int, int, int]:
+    """
+    Расширенный Евклид.
+    Находит d, x, y такие, что a*x + b*y = d, где d = gcd(a, b).
+    """
+    if b == 0:
+        return a, 1, 0
+
+    old_r, r = a, b
+    old_x, x = 1, 0
+    old_y, y = 0, 1
+
+    while r != 0:
+        q = old_r // r
+        old_r, r = r, old_r - q * r
+        old_x, x = x, old_x - q * x
+        old_y, y = y, old_y - q * y
+
+    return old_r, old_x, old_y
+
+
+def mod_inverse(a: int, n: int) -> int:
+    """
+    Обратный элемент: находим такое x, что a * x ≡ 1 (mod n).
+    Если его не существует — кидаем ошибку.
+    """
+    d, x, _ = extended_gcd(a, n)
+    if d != 1:
+        raise ValueError(f"Обратный элемент не существует: gcd({a}, {n}) = {d}")
+    return x % n
+
+
+def mod_pow(base: int, exp: int, mod: int) -> int:
+    """
+    Быстрое возведение в степень по модулю.
+    Считает base^exp mod mod методом двоичного разложения показателя.
+    """
+    result = 1
+    base = base % mod
+
+    while exp > 0:
+        # Если текущий бит показателя = 1, домножаем результат
+        if exp & 1:
+            result = (result * base) % mod
+        exp >>= 1
+        base = (base * base) % mod
+
+    return result
+
+
+def miller_rabin_test(n: int, rounds: int = 20) -> bool:
+    """
+    Тест Миллера-Рабина — гораздо надёжнее теста Ферма.
+    Ферма пропускает числа Кармайкла, а Миллер-Рабин — нет (ну, почти).
+    
+    При 20 раундах вероятность ошибки — не более 4^(-20) ≈ 10^(-12).
+    """
+    if n < 2:
+        return False
+    if n == 2 or n == 3:
+        return True
+    if n % 2 == 0:
+        return False
+
+    # Представляем n-1 в виде 2^s * d, где d — нечётное
+    s = 0
+    d = n - 1
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+
+    for _ in range(rounds):
+        a = random.randrange(2, n - 1)
+        x = mod_pow(a, d, n)
+
+        if x == 1 or x == n - 1:
+            continue
+
+        found_minus_one = False
+        for _ in range(s - 1):
+            x = mod_pow(x, 2, n)
+            if x == n - 1:
+                found_minus_one = True
+                break
+
+        if not found_minus_one:
+            return False  # точно составное
+
+    return True  # скорее всего простое
+
+
+def generate_prime(bits: int) -> int:
+    """
+    Генерирует случайное простое число заданной битовой длины.
+    Просто перебираем нечётные кандидаты, пока не найдём простой.
+    """
+    while True:
+        candidate = random.getrandbits(bits)
+        # Ставим старший бит (чтобы число было нужной длины)
+        # и младший (чтобы было нечётным)
+        candidate |= (1 << (bits - 1)) | 1
+
+        if miller_rabin_test(candidate):
+            return candidate
+
+
+def generate_rsa_keys(bits: int = 512) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """
+    Генерация ключевой пары RSA.
+    
+    bits — общая длина модуля n в битах.
+    Каждый из простых p, q берётся примерно вдвое короче.
+    
+    Возвращает (public_key, private_key), каждый — кортеж (экспонента, модуль).
+    """
+    half = bits // 2
+
+    p = generate_prime(half)
+    q = generate_prime(half)
+    # На всякий случай — p и q не должны совпасть
+    while q == p:
+        q = generate_prime(half)
+
+    n = p * q
+    phi = (p - 1) * (q - 1)
+
+    # Стандартный выбор e = 65537 (четвёртое простое число Ферма)
+    e = 65537
+    if gcd(e, phi) != 1:
+        # Если вдруг не подошло — ищем другое нечётное e
+        e = 3
+        while gcd(e, phi) != 1:
+            e += 2
+
+    d = mod_inverse(e, phi)
+
+    return (e, n), (d, n)
+
+
+def split_into_blocks(data: bytes, block_size: int) -> List[bytes]:
+    """Разбивает байтовую строку на куски не больше block_size."""
+    return [data[i:i + block_size] for i in range(0, len(data), block_size)]
+
+
+def rsa_encrypt(plaintext: str, public_key: Tuple[int, int]) -> List[int]:
+    """
+    Шифрование текста открытым ключом RSA.
+    
+    Текст кодируется в UTF-8, разбивается на блоки,
+    каждый блок превращается в число и возводится в степень e по модулю n.
+    """
+    e, n = public_key
+    raw_bytes = plaintext.encode('utf-8')
+
+    # Максимальный размер блока — чтобы число точно было меньше n
+    max_block = (n.bit_length() - 1) // 8
+    blocks = split_into_blocks(raw_bytes, max_block)
+
+    encrypted = []
+    for block in blocks:
+        m = int.from_bytes(block, byteorder='big')
+        c = mod_pow(m, e, n)
+        encrypted.append(c)
+
+    return encrypted
+
+
+def rsa_decrypt(cipher_blocks: List[int], private_key: Tuple[int, int]) -> str:
+    """
+    Расшифровка: каждый блок возводим в степень d по модулю n,
+    восстанавливаем байты и склеиваем обратно в строку.
+    """
+    d, n = private_key
+    recovered = bytearray()
+
+    for c in cipher_blocks:
+        m = mod_pow(c, d, n)
+        # Определяем сколько байт нужно для этого числа
+        byte_len = (m.bit_length() + 7) // 8 or 1
+        recovered.extend(m.to_bytes(byte_len, byteorder='big'))
+
+    return recovered.decode('utf-8')
+
+
+def main():
+    print("Генерация ключей RSA (512 бит)...")
+    pub, priv = generate_rsa_keys(bits=512)
+    print(f"Открытый ключ:  e = {pub[0]}, n = {pub[1]}")
+    print(f"Закрытый ключ:  d = {priv[0]}")
+
+    message = (
+        "Криптография с открытым ключом позволяет безопасно передавать информацию "
+        "по незащищённым каналам связи. В данной работе реализован алгоритм RSA, "
+        "использующий большие числа, генерацию ключей, шифрование текста по блокам "
+        "и последующее восстановление исходного сообщения."
+    )
+
+    print("\n--- Исходное сообщение ---")
+    print(message)
+
+    encrypted = rsa_encrypt(message, pub)
+    print(f"\n--- Зашифровано ({len(encrypted)} блоков) ---")
+    for i, block in enumerate(encrypted):
+        print(f"  Блок {i}: {block}")
+
+    decrypted = rsa_decrypt(encrypted, priv)
+    print("\n--- После расшифровки ---")
+    print(decrypted)
+
+    # Проверяем, что ничего не потерялось
+    if message == decrypted:
+        print("\n✓ Всё совпало, расшифровка корректна!")
+    else:
+        print("\n✗ Ошибка: текст после расшифровки отличается!")
+
+
+if __name__ == "__main__":
+    main()
