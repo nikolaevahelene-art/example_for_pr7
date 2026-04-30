@@ -1,0 +1,37 @@
+def factorize(n: int) -> Tuple[int, int]:
+    """
+    Факторизация модуля n методом перебора делителей.
+    Применима только для малых значений n (учебный пример).
+    """
+    for i in range(2, int(n**0.5) + 1):
+        if n % i == 0:
+            return i, n // i
+    raise ValueError(f"Не удалось факторизовать число {n}")
+
+
+def rsa_attack(ciphertext: int, e: int, n: int) -> int:
+    """
+    Атака на RSA путём факторизации модуля.
+    По известному открытому ключу (e, n) и шифртексту c
+    восстанавливает исходное сообщение m.
+    """
+    p, q = factorize(n)
+    phi = (p - 1) * (q - 1)
+    d = mod_inverse(e, phi)
+    m = mod_pow(ciphertext, d, n)
+    return m
+
+
+# Демонстрация атаки
+e_pub = 7
+n_pub = 187
+c_intercepted = 11
+
+print(f"Перехваченный шифртекст: c = {c_intercepted}")
+print(f"Известный открытый ключ: e = {e_pub}, n = {n_pub}")
+
+p_found, q_found = factorize(n_pub)
+print(f"Факторизация: {n_pub} = {p_found} * {q_found}")
+
+m_recovered = rsa_attack(c_intercepted, e_pub, n_pub)
+print(f"Восстановленное сообщение: m = {m_recovered}")
